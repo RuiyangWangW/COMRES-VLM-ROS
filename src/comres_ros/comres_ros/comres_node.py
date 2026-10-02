@@ -16,9 +16,8 @@ the planning grid (comres_core.grid), reads the robots' cells and calls Mission.
 COMRES as the simulator does: every T_H ticks the maps are merged and the VLM is asked (in the
 background); a robot whose target was seen, reached or failed gets a new one from the COMRES
 selector, sent to its Nav2 at once (Nav2 replaces the previous goal). The search ends when a
-detector reports a target class detection_frames times in a row; exploration when no robot has
-a frontier left for no_frontier_ticks ticks; either on ~/stop or after max_mission_seconds. One
-node runs one mission: restart it for the next.
+detector reports a target class detection_frames times in a row; any mission on ~/stop or after
+max_mission_seconds. One node runs one mission: restart it for the next.
 
 Frames: with one robot, the world frame and the goal frame default to its SLAM map's frame and the
 base frame is found among the usual names, so nothing has to be set. The planning grid is centred
@@ -134,7 +133,6 @@ class ComresNode(Node):
         self.T_H = self.param("T_H", 100)
         self.tick_seconds = self.param("tick_seconds", 1.0)
         self.max_seconds = self.param("max_mission_seconds", 1800.0)
-        self.goal_timeout = self.param("goal_timeout", 60.0)
         self.goal_clearance = self.param("goal_clearance", 0.3)
         self.target_classes = set(self.param("target_classes", ["backpack"]))
         self.min_score = self.param("detection_min_score", 0.5)
@@ -144,7 +142,6 @@ class ComresNode(Node):
         self.fake_vlm = self.param("fake_vlm", False)
         self.run_root = os.path.expanduser(self.param("run_dir", "~/comres_runs"))
         self.auto_start = self.param("auto_start", False)
-        self.no_frontier_ticks = self.param("no_frontier_ticks", 30)
         if self.det_type not in DETECTION_TYPES:
             raise ValueError(f"detection_type must be one of {sorted(DETECTION_TYPES)}, got {self.det_type!r}")
         if len(self.robots) > 1 and not self.world_frame:
@@ -166,7 +163,6 @@ class ComresNode(Node):
         self.finished = False
         self._n_logged = 0
         self._n_errors = 0
-        self._idle_ticks = 0
 
         self.tf = Buffer()
         self.tf_listener = TransformListener(self.tf, self)
@@ -184,9 +180,8 @@ class ComresNode(Node):
         self.goal_handle: Dict[int, object] = {}               # the accepted goal Nav2 is running
         self.goal_seq: Dict[int, int] = {}                     # bumped by every send and retirement
         self.last_sent: Dict[int, int] = {}                    # seq of the last goal sent
-        self.goal_sent: Dict[int, Optional[dict]] = {}         # the current goal: target, where, progress
+        self.goal_sent: Dict[int, Optional[dict]] = {}         # the current goal: its seq and target
         self.need_goal: Dict[int, bool] = {}
-        self.last_dropped: Dict[int, Optional[tuple]] = {}
         self.det_count: Dict[int, int] = {}
         self.det_last: Dict[int, float] = {}
         self.det_seen_any = False
@@ -201,7 +196,6 @@ class ComresNode(Node):
             self.last_sent[i] = -1
             self.goal_sent[i] = None
             self.need_goal[i] = False
-            self.last_dropped[i] = None
             self.det_count[i] = 0
             self.det_last[i] = 0.0
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -409,7 +403,6 @@ class ComresNode(Node):
                 "start_cells": [list(c) for c, _ in cells], "start_poses_plan": [list(p) for _, p in cells],
                 "target_classes": sorted(self.target_classes), "detection_type": self.det_type,
                 "vlm_model": self.vlm_model, "vlm_base_url": self.vlm_url, "fake_vlm": self.fake_vlm,
-                "goal_timeout": self.goal_timeout,
                 "core_version": core_version(), "wall_clock_start": time.time()}
         with open(os.path.join(self.run_dir, "meta.json"), "w") as f:
             json.dump(meta, f, indent=1)
@@ -498,14 +491,7 @@ class ComresNode(Node):
             r = self.mission.robots[i]
             if self.need_goal[i] and r.target is not None:
                 self.send_goal(i, r.target, p)
-            self.watch_goal(i, p)
         self.flush_events(elapsed)
-        if self.task == "explore":                             # explored: no frontier left for anyone
-            idle = all(r.target is None for r in self.mission.robots) and not self.mission.strategy.in_flight()
-            self._idle_ticks = self._idle_ticks + 1 if idle else 0
-            if self.no_frontier_ticks > 0 and self._idle_ticks >= self.no_frontier_ticks:
-                self.finish("no frontier left")
-                return
         self.log("poses", {"step": self.step, "elapsed_s": round(elapsed, 3),
                            "cells": [list(c) for c, _ in cells], "poses_plan": [list(map(float, p)) for _, p in cells],
                            "targets": [list(r.target) if r.target else None for r in self.mission.robots]})
@@ -610,41 +596,12 @@ class ComresNode(Node):
         self.goal_seq[i] += 1
         seq = self.last_sent[i] = self.goal_seq[i]
         self.goal_handle.pop(i, None)                          # Nav2 preempts it
-        now = time.monotonic()
-        self.goal_sent[i] = {"seq": seq, "cell": tuple(cell), "xy": (x, y), "t_sent": now, "t_best": now,
-                             "line": math.dist((x, y), pose[:2]), "path": math.inf}
+        self.goal_sent[i] = {"seq": seq, "cell": tuple(cell)}
         self.need_goal[i] = False
-        fut = self.nav[i].send_goal_async(goal, feedback_callback=lambda fb, i=i, seq=seq: self.on_feedback(i, seq, fb))
+        fut = self.nav[i].send_goal_async(goal)
         fut.add_done_callback(lambda f, i=i, seq=seq: self.on_goal_response(i, seq, f))
         self.log("events", {"kind": "goal", "robot": r, "step": self.step, "cell": list(cell),
                             "goal_cell": list(gc), "plan_xy": [x, y], "nav": [gx, gy, gyaw], "frame": nav_frame})
-
-    def on_feedback(self, i: int, seq: int, fb) -> None:
-        """Nav2's remaining path length: progress along the path, even around walls."""
-        g = self.goal_sent[i]
-        rem = float(getattr(fb.feedback, "distance_remaining", 0.0) or 0.0)
-        if g is None or g["seq"] != seq or rem <= 0.0:
-            return
-        if rem < g["path"] - 0.5 * self.cell:
-            g["path"], g["t_best"] = rem, time.monotonic()
-
-    def watch_goal(self, i: int, pose) -> None:
-        """A goal that makes no progress (neither Nav2's remaining path nor the straight-line
-        distance shrinks) for goal_timeout seconds is given up as unreachable."""
-        g = self.goal_sent[i]
-        r = self.mission.robots[i]
-        if g is None or r.target is None or tuple(r.target) != g["cell"]:
-            return
-        d = math.dist(g["xy"], pose[:2])
-        now = time.monotonic()
-        if d < g["line"] - 0.5 * self.cell:
-            g["line"], g["t_best"] = d, now
-        elif now - g["t_best"] > self.goal_timeout:
-            self.get_logger().warning(f"{self.robots[i]}: no progress toward {list(g['cell'])} for "
-                                      f"{self.goal_timeout:.0f} s; giving it up")
-            cell = g["cell"]
-            self.cancel(i)
-            self.mission.report(i, "failed", cell)
 
     def on_goal_response(self, i: int, seq: int, fut) -> None:
         gh = fut.result()
@@ -673,15 +630,12 @@ class ComresNode(Node):
         self.goal_handle.pop(i, None)
         self.goal_sent[i] = None
         if status == GoalStatus.STATUS_SUCCEEDED:
-            self.last_dropped[i] = None
             self.mission.report(i, "reached", cell)
-        elif status == GoalStatus.STATUS_ABORTED and not (code == 0 and self.last_dropped[i] != cell):
+        elif status == GoalStatus.STATUS_ABORTED:
             self.get_logger().warning(f"{self.robots[i]}: Nav2 aborted the goal (error {code})")
             self.mission.report(i, "failed", cell)
-        else:                                                  # cancelled or preempted outside COMRES: choose
-            self.get_logger().warning(f"{self.robots[i]}: the goal ended with status {status} (error {code}); "
-                                      "choosing again")        # again (a second abort without an error: failed)
-            self.last_dropped[i] = cell
+        else:                                                  # cancelled outside COMRES: choose again
+            self.get_logger().warning(f"{self.robots[i]}: the goal ended with status {status}; choosing again")
             self.mission.report(i, "dropped", cell)
 
     def retire(self, i: int) -> None:

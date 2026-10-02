@@ -28,19 +28,16 @@ comres_node:
     free_threshold: 25
     free_fraction: 0.5                       # share of a cell's samples that must be free
 
-    task: "search"                           # search (ends on a detection) or explore (ends when no frontier is left)
+    task: "search"                           # search (ends on a detection) or explore (ends on ~/stop or the time limit)
     hint: ""                                 # the search hint, as in the simulated experiments
     T_H: 100                                 # ticks between merges and plans (as in the paper)
     tick_seconds: 1.0                        # one tick = one simulator step; the simulator's robot moves one
                                              # cell per step: Nav2 max speed = cell_size / tick_seconds keeps that
     max_mission_seconds: 1800.0
-    goal_timeout: 60.0                       # a goal without progress for this long is given up
-                                             # (progress: Nav2's remaining path or the straight line shrinks)
     goal_clearance: 0.3                      # Nav2 goals at least this far from walls (moved by up to 0.5 m)
     target_classes: ["backpack"]
     detection_min_score: 0.5
     detection_frames: 3                      # sightings in a row (each within 1 s of the last)
-    no_frontier_ticks: 30                    # explore: ends after this many ticks with no robot having a frontier
 
     vlm_base_url: "http://127.0.0.1:18765/v1"   # our server (COMRES-VLM serve_vlm.sh), e.g. the A5000 box
     vlm_model: "qwen3.8-27b"

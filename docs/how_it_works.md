@@ -90,8 +90,7 @@ std_srvs/srv/Trigger` (or `auto_start: true`). `~/start` answers "not ready: ...
 missing until everything is up. `~/stop` ends the mission and cancels every robot's goal; called
 before a mission, it keeps the node from starting one. One node runs one mission: restart the
 node for the next. A search ends when a robot's detector reports a target class
-`detection_frames` times in a row; exploration when no robot has a frontier left for
-`no_frontier_ticks` ticks; both after `max_mission_seconds`.
+`detection_frames` times in a row; any mission ends on `~/stop` or after `max_mission_seconds`.
 
 ## Same as the simulation
 
@@ -103,8 +102,7 @@ what the real world makes different:
 * the planner's latency is real (its question runs in the background; the plan takes effect at
   the first tick after the answer);
 * motion is Nav2's. Goals are moved up to 0.5 m off walls (`goal_clearance`), as Nav2 refuses goals
-  in its obstacle margin; a goal is given up as unreachable when Nav2 aborts it or when neither
-  Nav2's remaining path nor the straight-line distance shrinks for `goal_timeout`; a goal Nav2
+  in its obstacle margin; a goal is given up as unreachable when Nav2 aborts it; a goal Nav2
   gives up at the target counts as reached, as the simulator never gives up a target it is at;
   a goal's outcome only counts for the target it was sent for;
 * a robot's map between merges is its live SLAM map, with the last merge filling what it does not
@@ -120,7 +118,7 @@ merge the same maps and deliver the same plans at the same steps. On 2026-10-01 
 recorded runs (search and explore, every map size) were the same at every step.
 
 `tools/fake_dog.py` is a fake Go2 (a map revealed by a 360-degree scan as "SLAM", a NavigateToPose
-server with Nav2's feedback and error codes, a detector) to run the node without hardware;
+server, a detector) to run the node without hardware;
 `tools/fake_dog_test.sh` runs a mission against it and passes when the target is found.
 
 ## Logs
