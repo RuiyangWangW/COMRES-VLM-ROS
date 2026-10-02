@@ -1,0 +1,16 @@
+# colcon
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Mission logs, if run_dir is pointed here
+comres_runs/
+
+# OS / editor
+.DS_Store
+*.swp

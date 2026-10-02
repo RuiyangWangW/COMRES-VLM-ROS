@@ -1,0 +1,36 @@
+# The central COMRES node (comres_ros/comres_node.py). Run it on the computer that reaches every
+# robot's topics and our VLM server. {robot} is replaced by each robot id.
+comres_node:
+  ros__parameters:
+    robot_ids: ["go2_1", "go2_2"]
+    world_frame: "map"                       # the shared frame; TF world <- each robot's map frame must exist
+    map_topic: "/{robot}/map"                # each robot's live SLAM map (nav_msgs/OccupancyGrid)
+    base_frame: "{robot}/base_link"
+    nav_frame: "{robot}/map"                 # the frame of the robot's Nav2 goals (its global frame)
+    nav_action: "/{robot}/navigate_to_pose"
+    detection_topic: "/{robot}/detections"   # vision_msgs/Detection2DArray from the robot's YOLO
+
+    # The planning grid in the world frame. COMRES's parameters are in cells and were tuned for a
+    # 20-cell sensing range: cell_size = (useful sensing range) / 20, e.g. 5 m -> 0.25 m.
+    grid_x0: -20.0
+    grid_y0: -20.0
+    grid_width: 40.0
+    grid_height: 40.0
+    cell_size: 0.25
+    occ_threshold: 65                        # SLAM occupancy >= this is a wall
+    free_fraction: 0.5                       # share of a cell's samples that must be free
+
+    task: "search"                           # search (ends on detection) or explore (ends on ~/stop)
+    hint: ""                                 # the search hint, as in the simulated experiments
+    T_H: 100                                 # ticks between merges and plans (as in the paper)
+    tick_seconds: 1.0
+    max_mission_seconds: 1800.0
+    target_classes: ["backpack"]
+    detection_min_score: 0.5
+    detection_frames: 3                      # consecutive detection messages needed
+
+    vlm_base_url: "http://127.0.0.1:18765/v1"   # our server (COMRES-VLM serve_vlm.sh), e.g. the A5000 box
+    vlm_model: "qwen3.8-27b"
+    fake_vlm: false                          # true: random valid plans, no server (dry runs only)
+    run_dir: "~/comres_runs"
+    auto_start: false                        # false: start with `ros2 service call /comres_node/start std_srvs/srv/Trigger`
