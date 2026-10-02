@@ -26,7 +26,7 @@ ros2 launch slam_toolbox online_async_launch.py slam_params_file:=<that file>
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-git clone git@github.com:RuiyangWangW/COMRES-ROS.git ~/comres_ros_ws
+git clone git@github.com:RuiyangWangW/COMRES-VLM-ROS.git ~/comres_ros_ws
 cd ~/comres_ros_ws
 rosdep install --from-paths src --ignore-src -y
 pip install --user --break-system-packages openai
