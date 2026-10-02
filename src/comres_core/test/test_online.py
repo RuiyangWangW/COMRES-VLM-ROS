@@ -173,3 +173,102 @@ def test_frontier_near():
     occ = np.full((10, 10), UNK, np.int8)
     occ[:, :5] = FREE
     assert frontier_near(occ, (5, 4)) and frontier_near(occ, (5, 3)) and not frontier_near(occ, (5, 0))
+
+
+def test_one_robot_finds_the_target(fake_vlm):
+    """Tomorrow's setting: one robot (the planner asks with one robot; no other robots' targets)."""
+    truth = world()
+    m = Mission(["go2_1"], truth.shape, task="search", hint="The target is in the north-east room.",
+                params=Params(T_H=20))
+    try:
+        found = run(m, truth, [(19, 2)], target=(30, 52), ticks=600)
+        assert found is not None
+        plans = [e for e in m.events if e["kind"] == "plan"]
+        assert plans and all(p["valid"] for p in plans) and all(len(p["plan"]) == 1 for p in plans if p["plan"])
+        assert not m.strategy.errors
+    finally:
+        m.stop()
+
+
+def _open_room():
+    """A free room, an unknown strip along its east side (frontiers there)."""
+    occ = np.zeros((20, 30), np.int8)
+    occ[:, 25:] = UNK
+    return occ
+
+
+def _mission_with(selector, start=(10, 22)):
+    m = Mission(["a"], (20, 30), task="explore", params=Params(T_H=1000))
+    m.start([start])
+    r = m.robots[0]
+    blocked = lambda p: any(math.dist(p, q) <= 2 and r.steps_taken - t <= 50 for q, t in r.unreachable)
+    r.target_select_fn = lambda robot: selector(robot, blocked)
+    return m, r
+
+
+def test_stuck_frontier_after_nav2_reached(fake_vlm):
+    """The robot stays at T (Nav2 says reached, between ticks) and keeps picking T: after
+    REPEAT_LIMIT re-picks T is avoided and another target is chosen."""
+    from comres_core.online import REPEAT_LIMIT
+    T, OTHER = (10, 24), (2, 24)
+    m, r = _mission_with(lambda robot, blocked: OTHER if blocked(T) else T)
+    occ = _open_room()
+    for step in range(10):
+        m.update_robot(0, occ, (10, 23))              # the robot stands next to T, its frontier never clears
+        m.tick(step)
+        if r.target == T:
+            m.report(0, "reached", T)
+    kinds = [e["kind"] for e in m.events]
+    assert "stuck_frontier" in kinds and r.target == OTHER
+    picks_of_T = sum(1 for e in m.events if e["kind"] == "target" and e["target"] == list(T))
+    assert picks_of_T == REPEAT_LIMIT                   # the first pick, then REPEAT_LIMIT - 1 re-picks
+    m.stop()
+
+
+def test_stuck_frontier_after_own_arrival(fake_vlm):
+    """The same, with arrival found by the Mission's own test (no Nav2 report)."""
+    T, OTHER = (10, 24), (2, 24)
+    m, r = _mission_with(lambda robot, blocked: OTHER if blocked(T) else T)
+    occ = _open_room()
+    for step in range(10):
+        m.update_robot(0, occ, (10, 24))
+        m.tick(step)
+    assert any(e["kind"] == "stuck_frontier" for e in m.events) and r.target == OTHER
+    m.stop()
+
+
+def test_crawling_along_an_edge_is_not_stuck(fake_vlm):
+    """A robot that reaches a target, moves on and picks the next cell along the edge each step
+    (the simulator does this) is never treated as stuck."""
+    m, r = _mission_with(lambda robot, blocked: (int(robot.position[0]) + 1, 24))
+    occ = _open_room()
+    cell = (2, 23)
+    for step in range(12):
+        m.update_robot(0, occ, cell)
+        m.tick(step)
+        t = r.target
+        if t is not None:
+            m.report(0, "reached", t)
+            cell = (t[0], 23)                            # it moves to beside its target
+    assert not any(e["kind"] == "stuck_frontier" for e in m.events)
+    m.stop()
+
+
+def test_outcomes_for_another_target_are_ignored(fake_vlm):
+    m, r = _mission_with(lambda robot, blocked: (5, 24))
+    m.update_robot(0, _open_room(), (10, 20))
+    m.tick(0)
+    m.report(0, "failed", (1, 1))                        # a late result of an older goal
+    assert r.target == (5, 24) and not r.unreachable
+    m.report(0, "failed", (5, 24))
+    assert r.target is None and r.unreachable and r.unreachable[0][0] == (5, 24)
+    m.stop()
+
+
+def test_failed_at_the_target_counts_as_reached(fake_vlm):
+    m, r = _mission_with(lambda robot, blocked: (10, 24))
+    m.update_robot(0, _open_room(), (10, 23))
+    m.tick(0)
+    m.report(0, "failed", (10, 24))                      # within 1.5 cells: the simulator would not give up
+    assert not r.unreachable and m.events[-1]["kind"] == "reached"
+    m.stop()

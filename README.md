@@ -1,85 +1,77 @@
-# COMRES on real robots (ROS 2 Jazzy)
+# COMRES on Go2 robots (ROS 2 Jazzy)
 
-COMRES — the VLM team planner of [COMRES-VLM](https://github.com/RuiyangWangW/COMRES-VLM) — on a
-team of Unitree Go2 robots. Each robot runs its own SLAM, Nav2 and target detector; one central
-node runs COMRES exactly as in the simulated experiments:
+## 1. GPU server: start the VLM
 
-* every **T_H = 100 s** the robots' maps are merged and the VLM (Qwen3.8-27B on our server) is
-  asked for a plan: one piece of the unknown space per robot and, in search, where the target
-  probably is;
-* in between, whenever a robot's target is **seen, reached or unreachable**, the COMRES selector
-  picks its next frontier on that robot's own map (its live SLAM map on top of the last merged
-  map), and the node sends it to the robot's Nav2;
-* the VLM question runs in the background, so the robots never wait for it; the plan takes
-  effect when the answer arrives;
-* the search ends when a robot's detector reports the target.
-
-## Layout
-
-```
-src/comres_core/       no ROS
-  comres_core/algo/    the COMRES-VLM algorithm modules, unchanged; CORE_VERSION names the commit
-  comres_core/grid.py  the planning grid in the world frame; SLAM occupancy grid -> planning grid
-  comres_core/online.py  Mission: the simulator's COMRESStrategy driven in real time
-  test/                pytest, runs anywhere (python -m pytest src/comres_core/test)
-src/comres_ros/        ROS 2
-  comres_ros/comres_node.py   the central node
-  config/comres.yaml          robots, frames, topics, planning grid, hint, VLM server
-  launch/comres.launch.py
-tools/sync_core.sh     refresh algo/ from a COMRES-VLM checkout (refuses uncommitted changes)
+```bash
+cd ~/COMRES-VLM && source env.sh && ./serve_vlm.sh
 ```
 
-`old_ros_ws` (the earlier LLM waypoint planner, ROS_CoX_ws) was the reference for the topics and
-the Nav2 hand-off. What changed: COMRES instead of the GPT-4o waypoint prompt; live SLAM maps
-instead of a prebuilt map with simulated sensing; one central node instead of nodes passing files;
-any number of robots (nothing hard-coded to one robot); no API key in the code.
+## 2. Each dog
 
-## What each robot must provide
+Run its driver, SLAM Toolbox, Nav2 and the YOLO node. In the SLAM Toolbox parameters set
+`map_update_interval: 1.0`. Use the same `ROS_DOMAIN_ID` as the central computer.
 
-| what | default (`{robot}` = robot id) |
-|---|---|
-| live SLAM map, `nav_msgs/OccupancyGrid` | `/{robot}/map` |
-| TF from the shared world frame to the robot's map frame and base | `map` -> `{robot}/map` -> `{robot}/base_link` |
-| Nav2 `NavigateToPose` action, goals in its map frame | `/{robot}/navigate_to_pose`, frame `{robot}/map` |
-| its detector's output, `vision_msgs/Detection2DArray` (class name in `results[].hypothesis.class_id`) | `/{robot}/detections` |
-
-The robots' map frames must be placed in one world frame, e.g. by static transforms from where
-each robot starts (measured), or by a shared SLAM map (then `world_frame` and `nav_frame` may be
-the same frame).
-
-## The planning grid
-
-COMRES plans on a grid of `cell_size` cells over `grid_x0, grid_y0, grid_width, grid_height` (m) in
-the world frame, x east and y north (a larger row is further north, as in COMRES-VLM). Its
-parameters are in cells and were tuned for a 20-cell sensing range, so set
-`cell_size = (the robots' useful sensing range) / 20` (5 m -> 0.25 m). A grid cell is a wall if any
-SLAM cell in it is occupied (>= `occ_threshold`), free if at least `free_fraction` of it is free,
-else unknown.
-
-## Build and run
+## 3. Central computer: install (once)
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-cd comres_ros_ws && colcon build && source install/setup.bash
-# the VLM: COMRES-VLM serve_vlm.sh on the GPU box; set vlm_base_url to reach it
-ros2 launch comres_ros comres.launch.py hint:="The target is ..." vlm_base_url:=http://<gpu-box>:18765/v1
-ros2 service call /comres_node/start std_srvs/srv/Trigger     # starts the mission (the start cells are the team start)
-ros2 service call /comres_node/stop std_srvs/srv/Trigger      # ends it early
+git clone git@github.com:RuiyangWangW/COMRES-ROS.git ~/comres_ros_ws
+cd ~/comres_ros_ws
+rosdep install --from-paths src --ignore-src -y
+pip install --user --break-system-packages openai
+colcon build --symlink-install
 ```
 
-`fake_vlm: true` answers with random valid plans (no server) for dry runs. RViz: `/comres_node/merged_map`
-(the last merged map) and `/comres_node/targets` (the robots' current targets).
+## 4. Central computer: every session
 
-## Logs
+```bash
+source /opt/ros/jazzy/setup.bash && source ~/comres_ros_ws/install/setup.bash
+cd ~/comres_ros_ws
 
-Each mission writes `run_dir/<start time>/`: `meta.json` (settings, start cells and poses, the
-algorithm's commit), `events.jsonl` (merges, plans, targets, goals, seen / reached / failed,
-the end and why), `plans.jsonl` (every plan with the VLM's reply), `poses.jsonl` (every tick:
-cells, poses, targets) and `maps/merge_<step>.npz` (each merged map).
+# the VLM, through a tunnel to the GPU server (leave it running)
+ssh -N -L 18765:127.0.0.1:18765 <user>@<gpu-server> &
 
-## Tests
+# what the dog publishes, and whether the VLM answers
+ros2 run comres_ros comres_discover --vlm http://127.0.0.1:18765/v1
+```
 
-`python -m pytest src/comres_core/test` (numpy, scipy, scikit-image, pillow, openai; no ROS):
-the grid conversion, and missions on a small simulated world with perfect sensing, the VLM in
-fake mode, a slow VLM that must not stop the robots, and a failed goal that must be avoided.
-The ROS node itself has not been run yet (no ROS on the machine it was written on).
+Copy the names it prints into `src/comres_ros/config/comres.yaml`, and set there:
+
+| setting | what to put |
+|---|---|
+| `robot_ids`, `map_topic`, `nav_action`, `detection_topic`, `detection_type` | from `comres_discover` |
+| `target_classes` | the YOLO class of the target, e.g. `["backpack"]` |
+| `hint` | the search hint |
+| `cell_size` | the dog's useful sensing range / 20 (5 m -> 0.25) |
+| `grid_width`, `grid_height` | the area in metres, with margin (the dog starts in the middle) |
+
+Start each dog facing east (the hint's east), or set `grid_yaw_deg`.
+
+## 5. Run a mission
+
+```bash
+# terminal 1
+ros2 launch comres_ros comres.launch.py config:=$HOME/comres_ros_ws/src/comres_ros/config/comres.yaml
+
+# terminal 2
+ros2 service call /comres_node/start std_srvs/srv/Trigger    # "not ready: ..." says what is missing
+ros2 service call /comres_node/stop std_srvs/srv/Trigger     # stop at any time (cancels every goal)
+```
+
+The search ends by itself when the YOLO sees the target. For the next mission, restart terminal 1.
+Logs: `~/comres_runs/<start time>/`.
+
+Dry run with random plans instead of the VLM (no GPU server needed):
+
+```bash
+ros2 run comres_ros comres_node --ros-args --params-file src/comres_ros/config/comres.yaml -p fake_vlm:=true
+```
+
+## Without a dog
+
+```bash
+python3 -m pytest src/comres_core/test
+tools/fake_dog_test.sh ~/COMRES-VLM/benchmark/maps/bench_medium/bench_medium_branching_1.npy 50 2 59 69 240
+```
+
+How it works and how it was checked: [docs/how_it_works.md](docs/how_it_works.md).

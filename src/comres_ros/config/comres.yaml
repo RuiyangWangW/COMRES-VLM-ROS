@@ -1,36 +1,52 @@
 # The central COMRES node (comres_ros/comres_node.py). Run it on the computer that reaches every
-# robot's topics and our VLM server. {robot} is replaced by each robot id.
+# robot's topics and our VLM server. {robot} is replaced by each robot id. Find the names with
+# `ros2 run comres_ros comres_discover`. Numbers may be written as 60 or 60.0.
 comres_node:
   ros__parameters:
-    robot_ids: ["go2_1", "go2_2"]
-    world_frame: "map"                       # the shared frame; TF world <- each robot's map frame must exist
-    map_topic: "/{robot}/map"                # each robot's live SLAM map (nav_msgs/OccupancyGrid)
-    base_frame: "{robot}/base_link"
-    nav_frame: "{robot}/map"                 # the frame of the robot's Nav2 goals (its global frame)
+    robot_ids: ["go2_1"]
+    map_topic: "/{robot}/map"                # each robot's live SLAM map (SLAM Toolbox), not a costmap
+    map_qos: "reliable"                      # "reliable" (latched or not) or "best_effort"
+    world_frame: ""                          # "": one robot -> its SLAM map frame; several robots: a shared frame
+    base_frame: ""                           # "": the first that exists of {robot}/base_footprint, {robot}/base_link, base_footprint, base_link
+    nav_frame: ""                            # "": the robot's SLAM map frame (Nav2's global frame)
     nav_action: "/{robot}/navigate_to_pose"
-    detection_topic: "/{robot}/detections"   # vision_msgs/Detection2DArray from the robot's YOLO
+    detection_topic: "/{robot}/detections"
+    detection_type: "vision_msgs/Detection2DArray"   # or vision_msgs/Detection3DArray, yolo_msgs/DetectionArray, std_msgs/String
 
-    # The planning grid in the world frame. COMRES's parameters are in cells and were tuned for a
-    # 20-cell sensing range: cell_size = (useful sensing range) / 20, e.g. 5 m -> 0.25 m.
-    grid_x0: -20.0
-    grid_y0: -20.0
-    grid_width: 40.0
-    grid_height: 40.0
+    # The planning grid: centred on the team's start, grid_width x grid_height metres, turned by
+    # grid_yaw_deg so that its +y is what the hints and the VLM's picture call north (+x: east).
+    # COMRES's parameters are in cells and were tuned for a 20-cell sensing range:
+    # cell_size = (useful sensing range) / 20, e.g. 5 m -> 0.25 m.
+    grid_auto_center: true
+    grid_width: 60.0
+    grid_height: 60.0
+    grid_x0: -30.0                           # used only when grid_auto_center is false
+    grid_y0: -30.0
+    grid_yaw_deg: 0.0
     cell_size: 0.25
-    occ_threshold: 65                        # SLAM occupancy >= this is a wall
+    occ_threshold: 65                        # SLAM value >= this: wall; <= free_threshold: free; between: unknown
+    free_threshold: 25
     free_fraction: 0.5                       # share of a cell's samples that must be free
 
-    task: "search"                           # search (ends on detection) or explore (ends on ~/stop)
+    task: "search"                           # search (ends on a detection) or explore (ends when no frontier is left)
     hint: ""                                 # the search hint, as in the simulated experiments
     T_H: 100                                 # ticks between merges and plans (as in the paper)
-    tick_seconds: 1.0
+    tick_seconds: 1.0                        # one tick = one simulator step; the simulator's robot moves one
+                                             # cell per step: Nav2 max speed = cell_size / tick_seconds keeps that
     max_mission_seconds: 1800.0
+    goal_timeout: 60.0                       # a goal without progress for this long is given up
+                                             # (progress: Nav2's remaining path or the straight line shrinks)
+    goal_clearance: 0.3                      # Nav2 goals at least this far from walls (moved by up to 0.5 m)
+    arrival_hold: 5                          # ticks a frontier that never clears is avoided (see comres_core/online.py)
     target_classes: ["backpack"]
     detection_min_score: 0.5
-    detection_frames: 3                      # consecutive detection messages needed
+    detection_frames: 3                      # sightings in a row (each within 1 s of the last)
+    no_frontier_ticks: 30                    # explore: ends after this many ticks with no robot having a frontier
 
     vlm_base_url: "http://127.0.0.1:18765/v1"   # our server (COMRES-VLM serve_vlm.sh), e.g. the A5000 box
     vlm_model: "qwen3.8-27b"
+    vlm_timeout: 90.0                        # seconds per VLM call
     fake_vlm: false                          # true: random valid plans, no server (dry runs only)
     run_dir: "~/comres_runs"
-    auto_start: false                        # false: start with `ros2 service call /comres_node/start std_srvs/srv/Trigger`
+    auto_start: false                        # false: ros2 service call /comres_node/start std_srvs/srv/Trigger
+                                             # one node runs one mission: restart it for the next

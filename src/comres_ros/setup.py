@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "comres_node = comres_ros.comres_node:main",
+            "comres_discover = comres_ros.discover:main",
         ],
     },
 )

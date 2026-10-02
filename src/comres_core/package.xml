@@ -10,7 +10,8 @@
   <exec_depend>python3-scipy</exec_depend>
   <exec_depend>python3-skimage</exec_depend>
   <exec_depend>python3-pil</exec_depend>
-  <exec_depend>python3-openai</exec_depend>
+  <exec_depend>python3-matplotlib</exec_depend>
+  <!-- also needs the openai python package: pip install openai (no rosdep key) -->
   <test_depend>python3-pytest</test_depend>
   <export>
     <build_type>ament_python</build_type>

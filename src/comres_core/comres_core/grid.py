@@ -12,8 +12,10 @@ cell of (the robots' useful sensing range) / 20 keeps them meaning the same thin
 A robot's SLAM map (nav_msgs/OccupancyGrid: row-major, data[j * width + i] is the cell at
 (i, j) of the map, j along the map's y axis, origin = the pose of cell (0, 0)'s corner in the
 map's frame; -1 unknown, 0..100 occupied probability) is sampled at sub x sub points per planning
-cell: a cell is a wall if any sample is occupied (>= occ_threshold), so thin walls stay closed;
-else free if at least free_fraction of its samples are free; else unknown.
+cell, after growing its occupied pixels (>= occ_threshold) by one pixel so that thin walls stay
+closed at any angle between the map and the grid: a cell is a wall if any sample is occupied;
+else free if at least free_fraction of its samples are free (<= free_threshold); else unknown
+(values between the two thresholds are unknown, as in Nav2's map convention).
 """
 
 from dataclasses import dataclass
@@ -21,6 +23,7 @@ import math
 from typing import Optional, Tuple
 
 import numpy as np
+from scipy import ndimage
 
 UNKNOWN, FREE, WALL = -1, 0, 1
 
@@ -67,15 +70,17 @@ def invert(a: Pose2D) -> Pose2D:
 
 def occupancy_to_grid(data: np.ndarray, resolution: float, origin: Pose2D, world_from_map: Pose2D,
                       spec: GridSpec, occ_threshold: int = 65, free_fraction: float = 0.5,
-                      sub: Optional[int] = None) -> np.ndarray:
+                      sub: Optional[int] = None, free_threshold: int = 25) -> np.ndarray:
     """
     A SLAM occupancy grid on the planning grid. data: (height, width) int array, data[j, i] the
     map cell (i, j); origin: the pose of the map's cell (0, 0) corner in the map's frame;
     world_from_map: the map frame's pose in the world frame. sub: samples per cell side
     (default: one per map cell, at least 1).
     """
-    data = np.asarray(data)
+    data = np.asarray(data).astype(np.int16)
     h, w = data.shape
+    occ = ndimage.binary_dilation(data >= occ_threshold, structure=np.ones((3, 3), bool))
+    data = np.where(occ, 100, data)
     s = int(sub) if sub else max(1, int(math.ceil(spec.cell / float(resolution))))
     off = (np.arange(s) + 0.5) / s                                    # sample offsets in a cell
     cols = (np.arange(spec.cols)[:, None] + off[None, :]).ravel()     # (cols*s,)
@@ -94,7 +99,7 @@ def occupancy_to_grid(data: np.ndarray, resolution: float, origin: Pose2D, world
     v[inside] = data[j[inside], i[inside]]
     v = v.reshape(spec.rows, s, spec.cols, s)
     wall = (v >= occ_threshold).any(axis=(1, 3))
-    free = ((v >= 0) & (v < occ_threshold)).mean(axis=(1, 3)) >= free_fraction
+    free = ((v >= 0) & (v <= free_threshold)).mean(axis=(1, 3)) >= free_fraction
     out = np.full(spec.shape, UNKNOWN, dtype=np.int8)
     out[free] = FREE
     out[wall] = WALL
@@ -102,17 +107,21 @@ def occupancy_to_grid(data: np.ndarray, resolution: float, origin: Pose2D, world
 
 
 def free_cell_near(grid: np.ndarray, cell: Tuple[int, int], radius: int = 3) -> Tuple[int, int]:
-    """The cell itself if it is not a wall, else the nearest non-wall cell within `radius`
-    (a robot never stands in a wall; discretisation can put its cell there)."""
+    """The cell itself if it is not a wall, else the nearest FREE cell within `radius` (or, if
+    none, the nearest unknown one): a robot never stands in a wall; discretisation can put its cell
+    there, and its seen side is the likelier one."""
     r, c = cell
     if grid[r, c] != WALL:
         return cell
-    best, bd = cell, None
-    for dr in range(-radius, radius + 1):
-        for dc in range(-radius, radius + 1):
-            rr, cc = r + dr, c + dc
-            if 0 <= rr < grid.shape[0] and 0 <= cc < grid.shape[1] and grid[rr, cc] != WALL:
-                d = dr * dr + dc * dc
-                if bd is None or d < bd:
-                    best, bd = (rr, cc), d
-    return best
+    for want in (FREE, UNKNOWN):
+        best, bd = None, None
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                rr, cc = r + dr, c + dc
+                if 0 <= rr < grid.shape[0] and 0 <= cc < grid.shape[1] and grid[rr, cc] == want:
+                    d = dr * dr + dc * dc
+                    if bd is None or d < bd:
+                        best, bd = (rr, cc), d
+        if best is not None:
+            return best
+    return cell
