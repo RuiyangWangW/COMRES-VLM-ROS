@@ -18,12 +18,6 @@ What differs is time and the world, where it must:
     cells its SLAM does not know (in the simulator the world never changes, so the two agree);
   * the cells within 2 cells of the robot count as seen (free unless its map says wall), as the
     simulated sensor always observes that disc (SENSOR_ALWAYS_OBSERVED_RADIUS);
-  * a robot that, staying where it is, picks again and again the target it has just reached
-    (REPEAT_LIMIT times; its frontier never clears from its map: a SLAM map that has not caught
-    up, glass, a sensor blind spot) avoids it for `arrival_hold` steps and chooses again, instead
-    of standing still. A robot crawling along a frontier edge picks the cell beside its last
-    target each step, but those are different targets, so this never acts in the simulator
-    (tools/shadow_check.py checks it);
   * goal outcomes come from the robot's navigation (report): "reached", "failed" (unreachable:
     avoided for the selector's UNREACHABLE_MEMORY steps, as the simulator gives up a route) or
     "dropped" (cancelled outside COMRES: chosen again freely).
@@ -51,8 +45,6 @@ VANISH_RADIUS = 2.0          # COMRES-VLM robot.VANISH_RADIUS (cells)
 ARRIVAL_RADIUS = 1.5         # COMRES-VLM Robot._check_arrival: distance < 1.5 cells
 MAX_VANISH_PER_STEP = 4      # COMRES-VLM robot.MAX_VANISH_PER_STEP
 ALWAYS_SEEN_RADIUS = experiment_config.SENSOR_ALWAYS_OBSERVED_RADIUS   # cells (2)
-REPEAT_LIMIT = 3             # re-picks of a just-reached target, without leaving it, before it is avoided
-STAY_RADIUS = 3.0            # cells: still at a reached target (a Nav2 goal moved off a wall, its tolerance)
 
 
 def frontier_near(occ: np.ndarray, point: Cell, radius: float = VANISH_RADIUS) -> bool:
@@ -86,8 +78,6 @@ class RobotProxy:
         self.unreachable: List[Tuple[Cell, int]] = []
         self.steps_taken = 0
         self.target_select_fn: Optional[Callable] = None
-        self.ended: Optional[Tuple[Cell, Cell]] = None    # Mission: (target, robot cell) when a target was reached
-        self.streak: Optional[List] = None           # ... [target, re-picks] of a target picked again there
 
     @property
     def target(self) -> Optional[Cell]:
@@ -195,7 +185,7 @@ class Mission:
     """
 
     def __init__(self, names: Sequence[str], shape: Tuple[int, int], task: str = "search", hint: str = "",
-                 params: Optional[Params] = None, planner=None, arrival_hold: int = 5):
+                 params: Optional[Params] = None, planner=None):
         self.names = list(names)
         self.shape = tuple(shape)
         self.params = params if params is not None else Params()
@@ -207,7 +197,6 @@ class Mission:
         self.started = False
         self.step = -1
         self.events: List[Dict] = []
-        self.arrival_hold = int(arrival_hold)
 
     @property
     def T_H(self) -> int:
@@ -247,12 +236,6 @@ class Mission:
         self.events.append({"t": round(time.time(), 3), "step": self.step, "kind": kind,
                             **({"robot": self.names[i]} if i is not None else {}), **kw})
 
-    def _hold(self, r: RobotProxy, cell: Cell) -> None:
-        """Avoid `cell` for arrival_hold steps (the selector's exclusion list, aged so that it
-        expires after arrival_hold of its UNREACHABLE_MEMORY steps)."""
-        if self.arrival_hold > 0:
-            r.unreachable.append((tuple(cell), r.steps_taken - UNREACHABLE_MEMORY + self.arrival_hold))
-
     def report(self, i: int, outcome: str, target: Optional[Cell] = None) -> None:
         """A goal outcome from robot i's navigation: "reached", "failed" (unreachable) or
         "dropped" (the goal ended for a reason outside COMRES, e.g. cancelled by an operator).
@@ -265,27 +248,11 @@ class Mission:
             outcome = "reached"                        # the simulator never gives up a target it is at
         if outcome == "failed":
             r.unreachable.append((r.target, r.steps_taken))
-        if outcome == "reached":
-            r.ended = (tuple(r.target), cell)
         self._event(outcome, i, target=list(r.target))
         r._fallback_waypoint = None
 
     def _select(self, i: int, r: RobotProxy) -> None:
         r._fallback_waypoint = r.target_select_fn(r)
-        t, pos = r.target, tuple(int(v) for v in r.position)
-        if t is not None and r.ended is not None and math.dist(t, r.ended[0]) < ARRIVAL_RADIUS \
-                and math.dist(pos, r.ended[1]) <= STAY_RADIUS:          # the target just reached, again
-            if r.streak is not None and math.dist(t, r.streak[0]) < ARRIVAL_RADIUS:
-                r.streak[1] += 1
-            else:
-                r.streak = [t, 1]
-            if r.streak[1] >= REPEAT_LIMIT:            # see the module docstring
-                self._event("stuck_frontier", i, target=list(t))
-                self._hold(r, t)
-                r.streak = None
-                r._fallback_waypoint = r.target_select_fn(r)
-        else:
-            r.streak = None
         if r.target is not None:
             self._event("target", i, target=list(r.target))
 
@@ -296,7 +263,6 @@ class Mission:
             old = r.target
             if old is not None and math.dist(old, self._sensed[i][1]) < ARRIVAL_RADIUS:
                 self._event("arrived", i, target=list(old))
-                r.ended = (tuple(old), self._sensed[i][1])
                 r._fallback_waypoint = None
 
     def robots_phase(self, step: int) -> None:

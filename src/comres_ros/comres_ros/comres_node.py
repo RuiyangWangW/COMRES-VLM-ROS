@@ -136,7 +136,6 @@ class ComresNode(Node):
         self.max_seconds = self.param("max_mission_seconds", 1800.0)
         self.goal_timeout = self.param("goal_timeout", 60.0)
         self.goal_clearance = self.param("goal_clearance", 0.3)
-        self.arrival_hold = self.param("arrival_hold", 5)
         self.target_classes = set(self.param("target_classes", ["backpack"]))
         self.min_score = self.param("detection_min_score", 0.5)
         self.det_frames = self.param("detection_frames", 3)
@@ -394,7 +393,7 @@ class ComresNode(Node):
         from params import Params                               # the algorithm's (comres_core put it on sys.path)
         from comres_core.online import Mission
         self.mission = Mission(self.robots, self.spec.shape, task=self.task, hint=self.hint,
-                               params=Params(T_H=self.T_H, dt=self.tick_seconds), arrival_hold=self.arrival_hold)
+                               params=Params(T_H=self.T_H, dt=self.tick_seconds))
         self.mission.start([c for c, _ in cells])
         self.t0 = time.monotonic()
         self.step = 0
@@ -410,7 +409,7 @@ class ComresNode(Node):
                 "start_cells": [list(c) for c, _ in cells], "start_poses_plan": [list(p) for _, p in cells],
                 "target_classes": sorted(self.target_classes), "detection_type": self.det_type,
                 "vlm_model": self.vlm_model, "vlm_base_url": self.vlm_url, "fake_vlm": self.fake_vlm,
-                "arrival_hold": self.arrival_hold, "goal_timeout": self.goal_timeout,
+                "goal_timeout": self.goal_timeout,
                 "core_version": core_version(), "wall_clock_start": time.time()}
         with open(os.path.join(self.run_dir, "meta.json"), "w") as f:
             json.dump(meta, f, indent=1)
@@ -537,7 +536,7 @@ class ComresNode(Node):
                     self.get_logger().warning(f"plan asked at step {e.get('query_step')} unusable: {e.get('error')}")
             elif k == "plan_error":
                 self.get_logger().error(f"the planner failed (asked at step {e.get('query_step')}): {e.get('error', '')[-400:]}")
-            elif k in ("failed", "stuck_frontier"):
+            elif k == "failed":
                 self.get_logger().warning(f"{e.get('robot')}: {k} {e.get('target')}")
         self._n_logged = len(self.mission.events)
 

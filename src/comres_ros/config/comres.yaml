@@ -37,7 +37,6 @@ comres_node:
     goal_timeout: 60.0                       # a goal without progress for this long is given up
                                              # (progress: Nav2's remaining path or the straight line shrinks)
     goal_clearance: 0.3                      # Nav2 goals at least this far from walls (moved by up to 0.5 m)
-    arrival_hold: 5                          # ticks a frontier that never clears is avoided (see comres_core/online.py)
     target_classes: ["backpack"]
     detection_min_score: 0.5
     detection_frames: 3                      # sightings in a row (each within 1 s of the last)

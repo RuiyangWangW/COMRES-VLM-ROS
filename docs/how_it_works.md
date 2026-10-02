@@ -109,10 +109,6 @@ what the real world makes different:
   a goal's outcome only counts for the target it was sent for;
 * a robot's map between merges is its live SLAM map, with the last merge filling what it does not
   know; the 2-cell disc around the robot counts as seen where neither knows it;
-* a robot that, staying where it reached a target, picks that same target 3 times (its frontier
-  never clears: a SLAM map that lags, glass, a blind spot) avoids it for `arrival_hold` ticks
-  instead of standing still. A robot moving along a frontier edge picks a new cell each time, so
-  this never acts in the simulator.
 
 In the simulator the robot moves one cell per step: with `tick_seconds` 1, a Nav2 speed of
 `cell_size` m/s keeps that ratio (faster is fine, it only moves more per step).
@@ -139,9 +135,8 @@ and `maps/merge_<step>.npz` (each merged map).
 
 * `python -m pytest src/comres_core/test` (no ROS): the grid conversion (thin walls at any angle,
   uncertain cells, rotated frames) and missions on a small simulated world (two robots, one
-  robot, a slow VLM that must not stop the robots, a failed goal that must be avoided, a frontier
-  that never clears, a robot moving along an edge that must not count as stuck, goal outcomes
-  for an older target ignored);
+  robot, a slow VLM that must not stop the robots, a failed goal that must be avoided, goal outcomes for an
+  older target ignored);
 * `python tools/shadow_check.py <results .../comres.jsonl> --sim <COMRES-VLM>`: the same decisions
   as the simulator, step for step (above);
 * `tools/fake_dog_test.sh` (ROS 2 Jazzy): the node end to end against the fake dog;

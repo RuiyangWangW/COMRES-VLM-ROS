@@ -8,8 +8,19 @@ cd ~/COMRES-VLM && source env.sh && ./serve_vlm.sh
 
 ## 2. Each dog
 
-Run its driver, SLAM Toolbox, Nav2 and the YOLO node. In the SLAM Toolbox parameters set
-`map_update_interval: 1.0`. Use the same `ROS_DOMAIN_ID` as the central computer.
+Run its driver, SLAM Toolbox, Nav2 and the YOLO node, with the same `ROS_DOMAIN_ID` as the
+central computer. In the SLAM Toolbox parameter file, set the map to update every second (the
+default is 5 s), then start SLAM Toolbox with that file:
+
+```yaml
+slam_toolbox:
+  ros__parameters:
+    map_update_interval: 1.0
+```
+
+```bash
+ros2 launch slam_toolbox online_async_launch.py slam_params_file:=<that file>
+```
 
 ## 3. Central computer: install (once)
 
