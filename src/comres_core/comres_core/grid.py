@@ -16,6 +16,11 @@ cell, after growing its occupied pixels (>= occ_threshold) by one pixel so that 
 closed at any angle between the map and the grid: a cell is a wall if any sample is occupied;
 else free if at least free_fraction of its samples are free (<= free_threshold); else unknown
 (values between the two thresholds are unknown, as in Nav2's map convention).
+
+clearance (m) > 0 also makes a wall of every cell whose centre is closer than that to an occupied
+SLAM pixel: the cells where a robot of that radius cannot stand, as Nav2's inscribed radius rules
+it. COMRES plans as for a point robot (the simulator's), so without it a one-cell gap between
+obstacles is a passage and a frontier behind it a target, which Nav2 cannot reach.
 """
 
 from dataclasses import dataclass
@@ -70,16 +75,17 @@ def invert(a: Pose2D) -> Pose2D:
 
 def occupancy_to_grid(data: np.ndarray, resolution: float, origin: Pose2D, world_from_map: Pose2D,
                       spec: GridSpec, occ_threshold: int = 65, free_fraction: float = 0.5,
-                      sub: Optional[int] = None, free_threshold: int = 25) -> np.ndarray:
+                      sub: Optional[int] = None, free_threshold: int = 25, clearance: float = 0.0) -> np.ndarray:
     """
     A SLAM occupancy grid on the planning grid. data: (height, width) int array, data[j, i] the
     map cell (i, j); origin: the pose of the map's cell (0, 0) corner in the map's frame;
     world_from_map: the map frame's pose in the world frame. sub: samples per cell side
-    (default: one per map cell, at least 1).
+    (default: one per map cell, at least 1). clearance: the robot's radius (m; 0: a point).
     """
     data = np.asarray(data).astype(np.int16)
     h, w = data.shape
-    occ = ndimage.binary_dilation(data >= occ_threshold, structure=np.ones((3, 3), bool))
+    raw_occ = data >= occ_threshold
+    occ = ndimage.binary_dilation(raw_occ, structure=np.ones((3, 3), bool))
     data = np.where(occ, 100, data)
     s = int(sub) if sub else max(1, int(math.ceil(spec.cell / float(resolution))))
     off = (np.arange(s) + 0.5) / s                                    # sample offsets in a cell
@@ -103,6 +109,14 @@ def occupancy_to_grid(data: np.ndarray, resolution: float, origin: Pose2D, world
     out = np.full(spec.shape, UNKNOWN, dtype=np.int8)
     out[free] = FREE
     out[wall] = WALL
+    if clearance > 0 and raw_occ.any():
+        dist = ndimage.distance_transform_edt(~raw_occ) * resolution     # m to the nearest occupied pixel
+        mid = s // 2                                                      # the sample at the cell's centre
+        ci, cj = i.reshape(spec.rows, s, spec.cols, s)[:, mid, :, mid], j.reshape(spec.rows, s, spec.cols, s)[:, mid, :, mid]
+        cin = (ci >= 0) & (ci < w) & (cj >= 0) & (cj < h)
+        close = np.zeros(spec.shape, bool)
+        close[cin] = dist[cj[cin], ci[cin]] < clearance
+        out[close] = WALL
     return out
 
 

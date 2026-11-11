@@ -1,8 +1,10 @@
-"""The central COMRES node.
+"""The central COMRES node and its link to the dogs (dog_link: the dogs run dog_bridge.py).
 
     ros2 launch comres_ros comres.launch.py [config:=<yaml>] [hint:="..."] [vlm_base_url:=http://host:18765/v1]
+        [dog_link:=false]
 
-hint and vlm_base_url override the config's when given (taken as plain text)."""
+hint and vlm_base_url override the config's when given (taken as plain text). dog_link:=false
+when the robots' topics reach this computer directly (the same ROS 2 version)."""
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -22,8 +24,12 @@ def _node(context):
             extra[k] = ParameterValue(v, value_type=str)
     if extra:
         params.append(extra)
-    return [Node(package="comres_ros", executable="comres_node", name="comres_node", output="screen",
-                 parameters=params)]
+    nodes = [Node(package="comres_ros", executable="comres_node", name="comres_node", output="screen",
+                  parameters=params)]
+    if LaunchConfiguration("dog_link").perform(context) == "true":
+        nodes.append(Node(package="comres_ros", executable="comres_dog_link", name="dog_link", output="screen",
+                          parameters=params[:1]))
+    return nodes
 
 
 def generate_launch_description():
@@ -32,5 +38,6 @@ def generate_launch_description():
         DeclareLaunchArgument("config", default_value=default),
         DeclareLaunchArgument("hint", default_value=""),
         DeclareLaunchArgument("vlm_base_url", default_value=""),
+        DeclareLaunchArgument("dog_link", default_value="true", choices=["true", "false"]),
         OpaqueFunction(function=_node),
     ])

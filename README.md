@@ -8,19 +8,17 @@ cd ~/COMRES-VLM && source env.sh && ./serve_vlm.sh
 
 ## 2. Each dog
 
-Run its driver, SLAM Toolbox, Nav2 and the YOLO node, with the same `ROS_DOMAIN_ID` as the
-central computer. In the SLAM Toolbox parameter file, set the map to update every second (the
-default is 5 s), then start SLAM Toolbox with that file:
-
-```yaml
-slam_toolbox:
-  ros__parameters:
-    map_update_interval: 1.0
-```
+Run its driver, sensors, SLAM, the YOLO node and Nav2; on the Go2, `slam3d` on its desktop
+(I3T_CPSL_UnitreeGo2_codebase), then `ros2 launch cpsl_nav nav2_go2.launch.py`. Then the link to
+the central computer, in the dog's own ROS 2 (Foxy on the Go2): copy `dog_bridge.py`,
+`dog_wire.py` and `comres_bt.xml` from `src/comres_ros/comres_ros/` into one folder on the dog
+(once), and run
 
 ```bash
-ros2 launch slam_toolbox online_async_launch.py slam_params_file:=<that file>
+python3 ~/comres_bridge/dog_bridge.py --robot go2_1
 ```
+
+It listens on port 9100; the central computer connects to it.
 
 ## 3. Central computer: install (once)
 
@@ -42,26 +40,27 @@ cd ~/comres_ros_ws
 # the VLM, through a tunnel to the GPU server (leave it running)
 ssh -N -L 18765:127.0.0.1:18765 <user>@<gpu-server> &
 
-# what the dog publishes, and whether the VLM answers
-ros2 run comres_ros comres_discover --vlm http://127.0.0.1:18765/v1
+# whether the VLM answers a real planning question
+python3 tools/vlm_check.py
 ```
 
-Copy the names it prints into `src/comres_ros/config/comres.yaml`, and set there:
+Set in `src/comres_ros/config/comres.yaml`:
 
 | setting | what to put |
 |---|---|
-| `robot_ids`, `map_topic`, `nav_action`, `detection_topic`, `detection_type` | from `comres_discover` |
+| `robot_ids`, and `dog_link`'s `robots` and `hosts` | the dogs' names, and where each one's bridge listens (`address:9100`; its Tailscale address works) |
 | `target_classes` | the YOLO class of the target, e.g. `["backpack"]` |
 | `hint` | the search hint |
 | `cell_size` | the dog's useful sensing range / 20 (5 m -> 0.25) |
 | `grid_width`, `grid_height` | the area in metres, with margin (the dog starts in the middle) |
+| `robot_clearance` | Nav2's `robot_radius` (0.25 m in `nav2_go2.yaml`) |
 
 Start each dog facing east (the hint's east), or set `grid_yaw_deg`.
 
 ## 5. Run a mission
 
 ```bash
-# terminal 1
+# terminal 1: the COMRES node and its link to the dogs
 ros2 launch comres_ros comres.launch.py config:=$HOME/comres_ros_ws/src/comres_ros/config/comres.yaml
 
 # terminal 2
@@ -83,6 +82,7 @@ ros2 run comres_ros comres_node --ros-args --params-file src/comres_ros/config/c
 ```bash
 python3 -m pytest src/comres_core/test
 tools/fake_dog_test.sh ~/COMRES-VLM/benchmark/maps/bench_medium/bench_medium_branching_1.npy 50 2 59 69 240
+tools/dog_bridge_test.sh        # the same through the dog link (bridge and link in separate ROS domains)
 ```
 
 How it works and how it was checked: [docs/how_it_works.md](docs/how_it_works.md).

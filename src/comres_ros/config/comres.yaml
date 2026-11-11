@@ -1,6 +1,8 @@
-# The central COMRES node (comres_ros/comres_node.py). Run it on the computer that reaches every
-# robot's topics and our VLM server. {robot} is replaced by each robot id. Find the names with
-# `ros2 run comres_ros comres_discover`. Numbers may be written as 60 or 60.0.
+# The central COMRES node (comres_ros/comres_node.py) and its link to the dogs (dog_link, below).
+# Run them on the computer that reaches every dog and our VLM server. {robot} is replaced by each
+# robot id; the topic defaults are what dog_link publishes. (Robots on the same ROS 2 instead:
+# dog_link:=false, and find their names with `ros2 run comres_ros comres_discover`.)
+# Numbers may be written as 60 or 60.0.
 comres_node:
   ros__parameters:
     robot_ids: ["go2_1"]
@@ -11,7 +13,8 @@ comres_node:
     nav_frame: ""                            # "": the robot's SLAM map frame (Nav2's global frame)
     nav_action: "/{robot}/navigate_to_pose"
     detection_topic: "/{robot}/detections"
-    detection_type: "vision_msgs/Detection2DArray"   # or vision_msgs/Detection3DArray, yolo_msgs/DetectionArray, std_msgs/String
+    detection_type: "std_msgs/String"        # what dog_link publishes; direct: vision_msgs/Detection2DArray,
+                                             # vision_msgs/Detection3DArray or yolo_msgs/DetectionArray
 
     # The planning grid: centred on the team's start, grid_width x grid_height metres, turned by
     # grid_yaw_deg so that its +y is what the hints and the VLM's picture call north (+x: east).
@@ -27,6 +30,8 @@ comres_node:
     occ_threshold: 65                        # SLAM value >= this: wall; <= free_threshold: free; between: unknown
     free_threshold: 25
     free_fraction: 0.5                       # share of a cell's samples that must be free
+    robot_clearance: 0.25                    # cells whose centre is nearer an obstacle are walls: Nav2's
+                                             # robot_radius (nav2_go2.yaml), so COMRES picks targets Nav2 can reach
 
     task: "search"                           # search (ends on a detection) or explore (ends on ~/stop or the time limit)
     hint: ""                                 # the search hint, as in the simulated experiments
@@ -34,10 +39,12 @@ comres_node:
     tick_seconds: 1.0                        # one tick = one simulator step; the simulator's robot moves one
                                              # cell per step: Nav2 max speed = cell_size / tick_seconds keeps that
     max_mission_seconds: 1800.0
-    goal_clearance: 0.3                      # Nav2 goals at least this far from walls (moved by up to 0.5 m)
+    goal_clearance: 0.0                      # Nav2 goals at least this far from walls (moved by up to 0.5 m);
+                                             # 0: robot_clearance already keeps every target clear for Nav2
     target_classes: ["backpack"]
     detection_min_score: 0.5
-    detection_frames: 3                      # sightings in a row (each within 1 s of the last)
+    detection_frames: 1                      # sightings in a row (each within 1 s of the last); 1: the Go2's
+                                             # yoloDetector reports each object once
 
     vlm_base_url: "http://127.0.0.1:18765/v1"   # our server (COMRES-VLM serve_vlm.sh), e.g. the A5000 box
     vlm_model: "qwen3.8-27b"
@@ -46,3 +53,10 @@ comres_node:
     run_dir: "~/comres_runs"
     auto_start: false                        # false: ros2 service call /comres_node/start std_srvs/srv/Trigger
                                              # one node runs one mission: restart it for the next
+
+# The link to the dogs (comres_ros/dog_link.py; each dog runs dog_bridge.py): robots[i] is reached
+# at hosts[i] ("address:port"; the Tailscale address works from anywhere).
+dog_link:
+  ros__parameters:
+    robots: ["go2_1"]
+    hosts: ["100.125.2.71:9100"]

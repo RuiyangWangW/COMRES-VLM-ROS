@@ -128,6 +128,7 @@ class ComresNode(Node):
         self.occ_threshold = self.param("occ_threshold", 65)
         self.free_threshold = self.param("free_threshold", 25)
         self.free_fraction = self.param("free_fraction", 0.5)
+        self.robot_clearance = self.param("robot_clearance", 0.0)  # m: cells nearer an obstacle are walls
         self.task = self.param("task", "search")
         self.hint = self.param("hint", "")
         self.T_H = self.param("T_H", 100)
@@ -294,7 +295,7 @@ class ComresNode(Node):
         data = np.asarray(m.data, dtype=np.int16).reshape(m.info.height, m.info.width)
         self.grids[i] = occupancy_to_grid(data, m.info.resolution, (o.position.x, o.position.y, yaw_of(o.orientation)),
                                           plan_from_map, self.spec, self.occ_threshold, self.free_fraction,
-                                          free_threshold=self.free_threshold)
+                                          free_threshold=self.free_threshold, clearance=self.robot_clearance)
         self._map_key[i] = (m, pose_key)                         # holds the message: identity stays valid
         self.warn_outside(i, data, m, plan_from_map)
         return True

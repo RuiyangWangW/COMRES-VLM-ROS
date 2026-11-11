@@ -24,6 +24,8 @@ setup(
         "console_scripts": [
             "comres_node = comres_ros.comres_node:main",
             "comres_discover = comres_ros.discover:main",
+            "comres_dog_link = comres_ros.dog_link:main",
+            "comres_dog_bridge = comres_ros.dog_bridge:main",
         ],
     },
 )

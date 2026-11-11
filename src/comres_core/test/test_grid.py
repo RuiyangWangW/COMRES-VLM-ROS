@@ -84,6 +84,23 @@ def test_rotated_map_frame():
     assert (g[:, col_wall + 1] != UNKNOWN).all()           # the grown pixel may reach the next column
 
 
+def test_clearance_closes_gaps_a_robot_cannot_pass():
+    """Posts 0.4 m apart (a gap a point passes, a robot of radius 0.25 m does not) and 1.15 m apart,
+    and a wall: with clearance 0.25 m the narrow gap closes, the wide one stays open in its middle,
+    and the cell whose centre is 0.2 m from the wall becomes a wall; without it all are free."""
+    spec = GridSpec.from_extent(0.0, 0.0, 4.0, 2.0, 0.25)
+    m = np.zeros((40, 80), np.int16)
+    for x in (0.40, 0.85, 2.0, 3.2):                       # 5 cm posts at y = 1.0 m
+        m[20, int(x / 0.05)] = 100
+    m[3, :] = 100                                          # a wall at y = 0.15 .. 0.2 m
+    narrow, wide = spec.cell_of(0.625, 1.125), spec.cell_of(2.625, 1.125)
+    near_wall, room = spec.cell_of(1.5, 0.375), spec.cell_of(1.5, 0.625)
+    g0 = occupancy_to_grid(m, 0.05, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), spec)
+    assert g0[narrow] == FREE and g0[wide] == FREE and g0[near_wall] == FREE and g0[room] == FREE
+    g = occupancy_to_grid(m, 0.05, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), spec, clearance=0.25)
+    assert g[narrow] == WALL and g[wide] == FREE and g[near_wall] == WALL and g[room] == FREE
+
+
 def test_free_cell_near():
     occ = np.zeros((5, 5), np.int8)
     occ[2, 2] = WALL
