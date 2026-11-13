@@ -107,9 +107,12 @@ at start-up, so either start the robot facing the direction the hint calls east,
 
 The central computer runs `tools/comres_central.sh`: the VLM on the GPU server (started there if
 it is not running), the SSH tunnel, and `comres.launch.py` (the node and dog_link). A mission is
-asked for from a dog: `comres_explore` or `comres_search "<hint>" [class]` on its desktop starts
-its stack and `dog_bridge.py --task explore|search --hint ... --target ...` (through environment
-variables, so the hint may hold any text). Once its Nav2 is up and there is a map, the bridge's
+asked for from a dog, in two steps on its desktop: `comres_explore_prep` (or `comres_search_prep`)
+starts the driver, sensors, 3D SLAM and RViz, to drive the dog by hand for a first map; then
+`comres_explore_start` (or `comres_search_start "<hint>" [class]`) starts Nav2 and `dog_bridge.py
+--task explore|search --hint ... --target ...` (through environment variables, so the hint may
+hold any text), which publishes each goal it gives on `/comres/goal` for RViz. Once its Nav2 is up
+and there is a map, the bridge's
 hello carries the request (an id per bridge start, the task, the hint, the classes); dog_link
 publishes each new one on `/comres/mission`, and the node takes it, sets task, hint and target
 classes, and starts the mission at the first tick everything is ready. After a mission has

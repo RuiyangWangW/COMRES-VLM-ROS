@@ -13,6 +13,8 @@ cpsl_detection's yoloDetector publishes them, once per new object), detection2d
 (vision_msgs/Detection2DArray) or string (std_msgs/String, comma-separated class names).
 --bt: the behavior tree Nav2 runs COMRES's goals with (default comres_bt.xml beside this file:
 fail fast, no spinning; "" for bt_navigator's default).
+Each goal it gives Nav2 is also published, latched, on /comres/goal (geometry_msgs/PoseStamped),
+for RViz.
 --task explore|search [--hint "..."] [--target class,...]: ask the central node for that mission
 (each start of the bridge is a new request; it starts once the robot is ready). The defaults come
 from COMRES_TASK, COMRES_HINT and COMRES_TARGETS, so that a launcher can pass any text.
@@ -32,6 +34,7 @@ from collections import deque
 import numpy as np
 import rclpy
 from action_msgs.msg import GoalStatus
+from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid
 from rclpy.action import ActionClient
@@ -72,6 +75,7 @@ class DogBridge(Node):
 
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(OccupancyGrid, a.map_topic, self.on_map, latched)
+        self.goal_pub = self.create_publisher(PoseStamped, "/comres/goal", latched)
         if a.det_type == "markers":
             from visualization_msgs.msg import MarkerArray
             self.create_subscription(MarkerArray, a.det_topic, self.on_markers, qos_profile_sensor_data)
@@ -221,6 +225,7 @@ class DogBridge(Node):
         g.pose.pose.orientation.z = math.sin(h["yaw"] / 2.0)
         g.pose.pose.orientation.w = math.cos(h["yaw"] / 2.0)
         g.behavior_tree = self.a.bt
+        self.goal_pub.publish(g.pose)
         self.goals[gid] = None
         self.nav.send_goal_async(g).add_done_callback(lambda f, gid=gid: self.on_response(gid, f))
         self.get_logger().info("goal %d: (%.2f, %.2f) in %s" % (gid, h["x"], h["y"], frame))

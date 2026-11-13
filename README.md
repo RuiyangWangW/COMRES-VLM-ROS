@@ -28,7 +28,7 @@ Set in `src/comres_ros/config/comres.yaml`:
 
 Copy `dog_bridge.py`, `dog_wire.py` and `comres_bt.xml` from `src/comres_ros/comres_ros/` into
 `~/comres_bridge/` on the dog. On the Go2, `start_comres.sh` of I3T_CPSL_UnitreeGo2_codebase
-(aliases `comres_explore`, `comres_search`) starts the rest; Nav2 uses MPPI, built once with
+(the aliases below) starts the rest; Nav2 uses MPPI, built once with
 `colcon build --packages-select nav2_mppi_controller --cmake-args -DBUILD_TESTING=OFF`.
 
 ## 3. Central computer: every session
@@ -44,21 +44,23 @@ and its link to the dogs. Leave it running; Ctrl-C stops it all (and the VLM, if
 
 ## 4. Run a mission
 
-On the dog's desktop (e.g. through NoMachine):
+On the dog's desktop (e.g. through NoMachine), in two steps:
 
 ```bash
-comres_explore                                    # explore, no prior information
-comres_search "<hint>" [target class]             # search, with the prior in plain words, e.g.
-comres_search "The backpack is in the room north of the start." backpack
+comres_explore_prep            # driver, sensors, 3D SLAM, RViz: drive the dog by hand for a first map
+comres_explore_start           # then Nav2 and the bridge: COMRES explores from that map
+
+comres_search_prep             # the same, for a search
+comres_search_start "<hint>" [target class]       # the prior in plain words, e.g.
+comres_search_start "The backpack is in the room north of the start." backpack
 ```
 
-One Terminator window starts the driver, sensors, 3D SLAM, Nav2, RViz and the bridge; the bridge
-asks the central computer for the mission once Nav2 is up and there is a map, and COMRES starts it.
-A search ends by itself when the YOLO sees the target;
-`ros2 service call /comres_node/stop std_srvs/srv/Trigger` on the central computer stops any
-mission (and cancels every goal). For the next mission, close the dog's window and run the command
-again; the central side keeps running. Start each dog facing east (the hint's east), or set
-`grid_yaw_deg`. Logs: `~/comres_runs/<start time>/`.
+The bridge asks the central computer for the mission once Nav2 is up and there is a map, and
+COMRES starts it on the map so far; RViz shows the waypoint it gave and Nav2's path. A search ends
+by itself when the YOLO sees the target; `ros2 service call /comres_node/stop std_srvs/srv/Trigger`
+on the central computer stops any mission (and cancels every goal). For the next mission, close
+the second window and run the start command again; the central side keeps running. Start each dog
+facing east (the hint's east), or set `grid_yaw_deg`. Logs: `~/comres_runs/<start time>/`.
 
 Without the dog's commands: run `dog_bridge.py` on the dog by hand and
 `ros2 service call /comres_node/start std_srvs/srv/Trigger` starts the config's `task` and `hint`.
