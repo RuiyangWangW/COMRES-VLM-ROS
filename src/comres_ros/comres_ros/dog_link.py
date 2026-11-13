@@ -13,6 +13,8 @@ the way comres_node expects a robot, whatever ROS 2 the dog runs:
                              ends as it ends there; a newer goal replaces the running one (aborted),
                              as Nav2 does. Rejected while the dog is not connected or its Nav2 is
                              down; aborted when the link drops.
+  /comres/mission            std_msgs/String, latched: JSON {id, task, hint, targets, robot}, each new
+                             mission a dog asks for (dog_bridge --task; comres_node starts it)
 
 Everything is stamped with this computer's clock when it arrives.
 
@@ -60,6 +62,7 @@ class Dog:
         self.nav_ready = False
         self.map_msg = None                                  # the last map, republished every second
         self.map_time = 0.0
+        self.mission_id = None                               # the last mission it asked for
         self.goals: Dict[int, dict] = {}                     # id -> {status, code, done: Event}
         self.active = None
         self.next_id = 0
@@ -95,6 +98,7 @@ class DogLink(Node):
         self.tfb = TransformBroadcaster(self)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         group = ReentrantCallbackGroup()
+        self.mission_pub = self.create_publisher(String, "/comres/mission", latched)
         self.dogs: List[Dog] = []
         for r, h in zip(robots, hosts):
             host, _, port = h.rpartition(":")
@@ -174,6 +178,11 @@ class DogLink(Node):
             if bool(h.get("nav_ready")) != dog.nav_ready:
                 self.get_logger().info(f"{dog.name}: Nav2 {'up' if h.get('nav_ready') else 'down'}")
             dog.nav_ready = bool(h.get("nav_ready"))
+            m = h.get("mission")
+            if m and m.get("id") != dog.mission_id:
+                dog.mission_id = m.get("id")
+                self.get_logger().info(f"{dog.name} asks for a {m.get('task')} mission ({m.get('id')})")
+                self.mission_pub.publish(String(data=json.dumps({**m, "robot": dog.name})))
 
     def republish_maps(self) -> None:
         for dog in self.dogs:

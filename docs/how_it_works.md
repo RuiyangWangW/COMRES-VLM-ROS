@@ -39,6 +39,7 @@ tools/dog_bridge_test.sh  the fake Go2 through the link (bridge and link in sepa
 tools/fake_dog_manual_test.sh  ~/start and ~/stop against the fake Go2
 tools/call_service.py  call ~/start or ~/stop without the ros2 command line
 tools/vlm_check.py     the VLM server answers the node's planning question (no ROS)
+tools/comres_central.sh  the central side in one command: the VLM, the tunnel, the node and the link
 ```
 
 `old_ros_ws` (the earlier LLM waypoint planner, ROS_CoX_ws) was the reference for the topics and
@@ -104,13 +105,24 @@ at start-up, so either start the robot facing the direction the hint calls east,
 
 ## Running a mission
 
-`ros2 launch comres_ros comres.launch.py`, then `ros2 service call /comres_node/start
-std_srvs/srv/Trigger` (or `auto_start: true`). `~/start` answers "not ready: ..." with what is
-missing until everything is up. `~/stop` ends the mission and cancels every robot's goal; called
-before a mission, it keeps the node from starting one. One node runs one mission: restart the
-node for the next. A search ends when a robot's detector reports a target class
-`detection_frames` times in a row (1 for the Go2's YOLO, which reports each object once); any
-mission ends on `~/stop` or after `max_mission_seconds`.
+The central computer runs `tools/comres_central.sh`: the VLM on the GPU server (started there if
+it is not running), the SSH tunnel, and `comres.launch.py` (the node and dog_link). A mission is
+asked for from a dog: `comres_explore` or `comres_search "<hint>" [class]` on its desktop starts
+its stack and `dog_bridge.py --task explore|search --hint ... --target ...` (through environment
+variables, so the hint may hold any text). Once its Nav2 is up and there is a map, the bridge's
+hello carries the request (an id per bridge start, the task, the hint, the classes); dog_link
+publishes each new one on `/comres/mission`, and the node takes it, sets task, hint and target
+classes, and starts the mission at the first tick everything is ready. After a mission has
+ended, the next request (the dog's command run again) starts the next mission in the same node;
+a request while a mission runs is refused (`~/stop` it first).
+
+By hand: `ros2 service call /comres_node/start std_srvs/srv/Trigger` (or `auto_start: true`)
+starts the config's task and hint; it answers "not ready: ..." with what is missing until
+everything is up, and once a mission has ended it refuses (restart the node). `~/stop` ends the
+mission and cancels every robot's goal; called before a mission, it keeps the node from starting
+one by itself. A search ends when a robot's detector reports a target class `detection_frames`
+times in a row (1 for the Go2's YOLO, which reports each object once); any mission ends on
+`~/stop` or after `max_mission_seconds`.
 
 ## Same as the simulation
 
@@ -161,7 +173,8 @@ and `maps/merge_<step>.npz` (each merged map).
   as the simulator, step for step (above);
 * `tools/fake_dog_test.sh` (ROS 2 Jazzy): the node end to end against the fake dog;
 * `tools/dog_bridge_test.sh` (ROS 2 Jazzy): the same through the link, the fake dog and its bridge
-  in one ROS domain, dog_link and the node in another;
+  in one ROS domain, dog_link and the node in another; the bridge asks for a search mission, and
+  after it a second bridge session for another, which the same node runs;
 * `python3 tools/vlm_check.py`: the VLM server answers the node's planning question (three plans);
 * `tools/fake_dog_manual_test.sh` (ROS 2 Jazzy): `~/start` before the robot is up, after, twice,
   and after the end; `~/stop` before any mission.

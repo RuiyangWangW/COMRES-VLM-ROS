@@ -13,6 +13,9 @@ cpsl_detection's yoloDetector publishes them, once per new object), detection2d
 (vision_msgs/Detection2DArray) or string (std_msgs/String, comma-separated class names).
 --bt: the behavior tree Nav2 runs COMRES's goals with (default comres_bt.xml beside this file:
 fail fast, no spinning; "" for bt_navigator's default).
+--task explore|search [--hint "..."] [--target class,...]: ask the central node for that mission
+(each start of the bridge is a new request; it starts once the robot is ready). The defaults come
+from COMRES_TASK, COMRES_HINT and COMRES_TARGETS, so that a launcher can pass any text.
 On the dog, copy this file, dog_wire.py and comres_bt.xml into one folder.
 """
 
@@ -78,8 +81,15 @@ class DogBridge(Node):
         else:
             from std_msgs.msg import String
             self.create_subscription(String, a.det_topic, self.on_string, qos_profile_sensor_data)
+        self.mission = None                                 # the mission this robot asks for, if any
+        if a.task:
+            self.mission = {"id": "%s-%s-%d" % (a.robot, time.strftime("%Y%m%d-%H%M%S"), os.getpid()), "task": a.task,
+                            "hint": a.hint if a.task == "search" else "",
+                            "targets": [t.strip() for t in a.target.split(",") if t.strip()]}
+            log.info("asking for a %s mission%s%s" % (a.task, ", hint: %r" % a.hint if self.mission["hint"] else "",
+                                                       ", targets %s" % self.mission["targets"] if self.mission["targets"] else ""))
         self.create_timer(0.1, self.tick)
-        self.create_timer(1.0, lambda: self.send({"ch": "hello", "robot": a.robot, "nav_ready": self.nav.server_is_ready()}))
+        self.create_timer(1.0, self.hello)
         threading.Thread(target=self.serve, daemon=True).start()
         threading.Thread(target=self.sender, daemon=True).start()
         log.info("dog bridge %s: port %d, map %s, base %s, Nav2 %s (tree %s), detections %s (%s)" % (
@@ -143,6 +153,13 @@ class DogBridge(Node):
                     pass
 
     # -- ROS (the executor thread) ---------------------------------------------------------
+    def hello(self):
+        """1 Hz: whether Nav2 is up, and the mission asked for once the robot is ready for it
+        (Nav2 up, a map): the central node starts it on the first request it sees."""
+        nav_ready = self.nav.server_is_ready()
+        ready = nav_ready and self.map_msg is not None
+        self.send({"ch": "hello", "robot": self.a.robot, "nav_ready": nav_ready, "mission": self.mission if ready else None})
+
     def map_frame(self):
         return self.map_msg.header.frame_id if self.map_msg is not None else None
 
@@ -266,6 +283,9 @@ def main(argv=None):
     ap.add_argument("--det-type", default="markers", choices=["markers", "detection2d", "string"])
     bt = os.path.join(os.path.dirname(os.path.abspath(__file__)), "comres_bt.xml")
     ap.add_argument("--bt", default=bt if os.path.exists(bt) else "")
+    ap.add_argument("--task", default=os.environ.get("COMRES_TASK", ""), choices=["", "explore", "search"])
+    ap.add_argument("--hint", default=os.environ.get("COMRES_HINT", ""), help="search: the prior, in plain words")
+    ap.add_argument("--target", default=os.environ.get("COMRES_TARGETS", ""), help="search: the class(es), e.g. backpack")
     a, ros_args = ap.parse_known_args(argv)
     if a.bt and not os.path.exists(a.bt):
         ap.error("--bt %s: no such file" % a.bt)

@@ -10,6 +10,9 @@ of robots that each run their own SLAM (e.g. SLAM Toolbox), Nav2 and target dete
        ~/merged_map              nav_msgs/OccupancyGrid (world frame), the last merged map
        ~/targets                 geometry_msgs/PoseArray (world frame), the robots' targets
   srv  ~/start, ~/stop           std_srvs/Trigger
+  in   /comres/mission           std_msgs/String, JSON {id, task, hint, targets, robot}: a mission a
+                                 robot asks for (dog_bridge --task, through dog_link); it starts as
+                                 soon as everything is ready, and a new one after the last has ended
 
 Every tick (tick_seconds; one tick = one simulator step) it converts each robot's SLAM map onto
 the planning grid (comres_core.grid), reads the robots' cells and calls Mission.tick, which runs
@@ -17,7 +20,8 @@ COMRES as the simulator does: every T_H ticks the maps are merged and the VLM is
 background); a robot whose target was seen, reached or failed gets a new one from the COMRES
 selector, sent to its Nav2 at once (Nav2 replaces the previous goal). The search ends when a
 detector reports a target class detection_frames times in a row; any mission on ~/stop or after
-max_mission_seconds. One node runs one mission: restart it for the next.
+max_mission_seconds. After a mission, ~/start refuses (restart the node), but a robot's new
+mission request starts the next one.
 
 Frames: with one robot, the world frame and the goal frame default to its SLAM map's frame and the
 base frame is found among the usual names, so nothing has to be set. The planning grid is centred
@@ -50,6 +54,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
+from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 
@@ -202,6 +207,9 @@ class ComresNode(Node):
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.merged_pub = self.create_publisher(OccupancyGrid, "~/merged_map", latched)
         self.targets_pub = self.create_publisher(PoseArray, "~/targets", 10)
+        self.requested: Optional[dict] = None                  # a robot's mission request, until started
+        self.request_ids = set()
+        self.create_subscription(String, "/comres/mission", self.on_mission, latched)
         self.create_service(Trigger, "~/start", self.on_start)
         self.create_service(Trigger, "~/stop", self.on_stop)
         self.timer = self.create_timer(self.tick_seconds, self.on_tick)
@@ -432,6 +440,56 @@ class ComresNode(Node):
         self.get_logger().info(f"~/stop: {res.message}")
         return res
 
+    def on_mission(self, msg) -> None:
+        """A robot asks for a mission (dog_bridge --task): it starts at the first tick everything
+        is ready; after a mission has ended, a new request starts the next one."""
+        try:
+            req = json.loads(msg.data)
+        except ValueError:
+            self.get_logger().warning(f"unreadable mission request: {msg.data[:200]!r}")
+            return
+        if req.get("id") in self.request_ids:
+            return
+        self.request_ids.add(req.get("id"))
+        who = req.get("robot", "a robot")
+        if req.get("task") not in ("explore", "search"):
+            self.get_logger().warning(f"{who} asks for an unknown task {req.get('task')!r}")
+            return
+        if self.mission is not None and not self.finished:
+            self.get_logger().warning(f"{who} asks for a {req['task']} mission while one runs; ~/stop it first")
+            return
+        if self.mission is not None or self.finished:
+            self.reset_mission()
+        self.task = req["task"]
+        self.hint = str(req.get("hint") or "") if self.task == "search" else ""
+        if req.get("targets"):
+            self.target_classes = set(map(str, req["targets"]))
+        self.requested = req
+        self.get_logger().info(f"{who} asks for a {self.task} mission" + (f", hint: {self.hint!r}" if self.hint else "")
+                               + f", targets {sorted(self.target_classes)}; it starts when everything is ready")
+
+    def reset_mission(self) -> None:
+        """Forget the last mission (its goals were cancelled when it ended), so another can start."""
+        self.mission = None
+        self.spec = None
+        self.world_from_plan = (0.0, 0.0, 0.0)
+        self.run_dir = None
+        self.step = 0
+        self.t0 = None
+        self.finished = False
+        self._n_logged = 0
+        self._n_errors = 0
+        self.grids.clear()
+        self._map_key.clear()
+        self.goal_handle.clear()
+        for i in range(len(self.robots)):                     # goal_seq keeps counting: late answers stay ignored
+            self.goal_sent[i] = None
+            self.need_goal[i] = False
+            self.det_count[i] = 0
+            self.det_last[i] = 0.0
+        self.det_seen_any = False
+        self.det_seen_target = False
+
     def finish(self, why: str, **kw) -> None:
         if self.finished or self.mission is None:
             return
@@ -458,9 +516,11 @@ class ComresNode(Node):
 
     def _tick(self) -> None:
         if self.mission is None:
-            if self.auto_start and not self.finished:
+            if (self.auto_start or self.requested is not None) and not self.finished:
                 msg = self.start()
-                if msg != "started":
+                if msg == "started":
+                    self.requested = None
+                else:
                     self.get_logger().warning(msg, throttle_duration_sec=5.0)
             return
         if self.finished:
