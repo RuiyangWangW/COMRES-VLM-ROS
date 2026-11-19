@@ -68,8 +68,10 @@ map_align:                                   # comres_ros/map_align_node.py: the
     base_frame: ""                           # "": the first that exists of {robot}/base_footprint, {robot}/base_link
     period: 1.0                              # s between filter updates
     search_period: 10.0                      # s between global searches while the maps grow
-    max_conflict: 0.08                       # first fusion: share of go2_2's points contradicting go2_1's
-                                             #   map (two real Go2 maps, aligned: 5.5-5.7%; no overlap: 9-14%)
+    max_conflict: 0.05                       # first fusion: share of go2_2's points contradicting go2_1's map,
+    strong_max_conflict: 0.08                #   or up to 8% when at least 70% of go2_2's obstacles lie on
+    strong_agree_share: 0.7                  #   go2_1's (two real Go2 maps, aligned: 5.5-5.7% at ~77%; see
+                                             #   AlignmentFilter). To test on the robots on Saturday 2026-11-21.
     lost_after: 20.0                         # once fused: search again after this long without a fit
     fine_extent: 30.0                        # m: larger maps are searched on 0.2 m cells (0.1 m below)
     track_max_move: 2.0                      # once fused: follow the maps (their loop closures reshape

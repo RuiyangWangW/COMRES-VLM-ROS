@@ -23,7 +23,8 @@ degrees of freedom, and it stays put while the robots move (it drifts only as th
                     spread under 0.1 m and 1.5 deg) whose transform, checked on the whole maps,
                     puts enough of B's obstacles on A's (`min_agree`), contradicts A little (B's
                     obstacles on A's free space, B's free cells on A's obstacles: `max_conflict`
-                    of B's points on A's known space), and beats every plausible rival by
+                    of B's points on A's known space, or `strong_max_conflict` when at least
+                    `strong_agree_share` of B's obstacles lie on A's), and beats every plausible rival by
                     `min_margin`, several updates in a row. Rivals are the global search's other
                     candidates, refined locally on the whole maps, that would pass those checks
                     themselves: in a symmetric place another transform fits as well, and the filter
@@ -264,13 +265,20 @@ class AlignmentFilter:
     def __init__(self, n: int = 2000, seed: int = 0, seed_spread: Tuple[float, float] = (0.15, math.radians(3.0)),
                  anywhere: float = 0.1, diffusion: Tuple[float, float] = (0.02, math.radians(0.3)),
                  points_per_update: float = 30.0, forget: float = 0.5, ready_after: int = 3,
-                 min_agree: int = 60, max_conflict: float = 0.05, min_margin: float = 0.15):
+                 min_agree: int = 60, max_conflict: float = 0.05, min_margin: float = 0.15,
+                 strong_max_conflict: float = 0.08, strong_agree_share: float = 0.7):
         self.n = n
         self.rng = np.random.default_rng(seed)
         self.seed_spread, self.anywhere, self.diffusion = seed_spread, anywhere, diffusion
         self.gamma = points_per_update            # how many independent points one update counts as
         self.forget = forget                      # how much of the old evidence an update keeps
         self.ready_after, self.min_agree, self.max_conflict, self.min_margin = ready_after, min_agree, max_conflict, min_margin
+        # More conflict is accepted when most of B lies on A's obstacles: two real Go2 maps, correctly
+        # aligned, contradicted each other on 5.5-5.7% with ~77% of B on A. Offline (2026-11-18), right
+        # fusions had 0.8-4.3% conflict; wrong ones between 5% and 8% had at most 57% of B on A (maps
+        # that do not overlap, 5.8-6.1%), so 70% is required. Few such cases, and one real one: to be
+        # tested on the robots (Saturday 2026-11-21).
+        self.strong_max_conflict, self.strong_agree_share = strong_max_conflict, strong_agree_share
         self.particles = np.zeros((0, 3))
         self.logw = np.zeros(0)
         self.candidates: List[Pose2D] = []        # the global search's, as last given
@@ -398,9 +406,15 @@ class AlignmentFilter:
             scores = field.score(np.array([T] + rivals), obstacles, free)
             margin = float(scores[0] - scores[1:].max()) if rivals else math.inf
             out.update(agree=chk["agree"], conflict=chk["conflict"], margin=margin, rivals=len(rivals),
-                       agrees=chk["agree"] >= self.min_agree, consistent=chk["conflict"] <= self.max_conflict,
+                       agrees=chk["agree"] >= self.min_agree, consistent=self.consistent(chk, len(obstacles)),
                        unique=margin >= self.min_margin)
         return out
+
+    def consistent(self, chk: Dict, n_obstacles: int) -> bool:
+        """Whether a check (ScoreField.check) contradicts A little enough (see __init__)."""
+        share = chk["agree"] / n_obstacles if n_obstacles else 0.0
+        return chk["conflict"] <= self.max_conflict or (
+            chk["conflict"] <= self.strong_max_conflict and share >= self.strong_agree_share)
 
     def plausible(self, field: ScoreField, whole_b: Tuple[np.ndarray, np.ndarray]) -> List[Pose2D]:
         """The candidates, each refined on the whole maps, that agree with A and contradict it
@@ -410,6 +424,6 @@ class AlignmentFilter:
         for T in self.candidates:
             R = refine(field, T, whole_b)
             chk = field.check(R, obstacles, free)
-            if chk["agree"] >= self.min_agree and chk["conflict"] <= self.max_conflict:
+            if chk["agree"] >= self.min_agree and self.consistent(chk, len(obstacles)):
                 out.append(R)
         return out

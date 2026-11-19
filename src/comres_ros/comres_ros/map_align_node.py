@@ -69,9 +69,9 @@ def key_of(m: OccupancyGrid):
 class Pair:
     """Robot k's map against the first robot's: its filter, and the maps it was last given."""
 
-    def __init__(self, robot: str, seed: int, max_conflict: float):
+    def __init__(self, robot: str, seed: int, conflict: Dict):
         self.robot = robot
-        self.filter = AlignmentFilter(seed=seed, max_conflict=max_conflict)
+        self.filter = AlignmentFilter(seed=seed, **conflict)
         self.b: Optional[GridMap] = None
         self.whole = None                     # map_points of its whole map
         self.key = None
@@ -99,8 +99,11 @@ class MapAlign(Node):
         self.track_move = (float(self.declare_parameter("track_max_move", 2.0).value),
                            math.radians(float(self.declare_parameter("track_max_turn_deg", 15.0).value)))
         self.track_conflict = float(self.declare_parameter("track_max_conflict", 0.15).value)
-        # the first fusion's conflict limit: 2026-11-18 the two Go2 maps, correctly aligned, had 5.5-5.7%
-        max_conflict = float(self.declare_parameter("max_conflict", 0.08).value)
+        # the first fusion's conflict limits (comres_core.map_align.AlignmentFilter): up to max_conflict,
+        # or strong_max_conflict when strong_agree_share of the map lies on the first robot's
+        conflict = {"max_conflict": float(self.declare_parameter("max_conflict", 0.05).value),
+                    "strong_max_conflict": float(self.declare_parameter("strong_max_conflict", 0.08).value),
+                    "strong_agree_share": float(self.declare_parameter("strong_agree_share", 0.7).value)}
         period = float(self.declare_parameter("period", 1.0).value)
         if len(self.robots) < 2:
             raise ValueError("map_align needs two robots or more (the first one's map is the world)")
@@ -112,7 +115,7 @@ class MapAlign(Node):
         self.a_key = None
         self.a_frame: Optional[str] = None
         self.field: Optional[ScoreField] = None
-        self.pairs = [Pair(r, seed=k, max_conflict=max_conflict) for k, r in enumerate(self.robots[1:], start=1)]
+        self.pairs = [Pair(r, seed=k, conflict=conflict) for k, r in enumerate(self.robots[1:], start=1)]
         self.tfs: Dict[str, TransformStamped] = {}
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         for r in self.robots:
