@@ -26,6 +26,7 @@ setup(
             "comres_discover = comres_ros.discover:main",
             "comres_dog_link = comres_ros.dog_link:main",
             "comres_dog_bridge = comres_ros.dog_bridge:main",
+            "comres_map_align = comres_ros.map_align_node:main",
         ],
     },
 )

@@ -129,6 +129,13 @@ class DogLink(Node):
                 continue
             s.settimeout(None)
             s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            # A dog that restarts or drops off the network closes nothing, and recv() would wait
+            # forever while its last map is republished: TCP keepalive notices it in ~10 s.
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 4)
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 2)
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+            s.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 10000)   # ms, for unacknowledged sends
             with dog.send_lock:
                 dog.sock = s
             warned = False

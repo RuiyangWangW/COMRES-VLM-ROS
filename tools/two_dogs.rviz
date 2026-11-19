@@ -1,0 +1,58 @@
+# RViz for the two-dog map fusion (map_align): both dogs' maps in the world frame (go2_1's map).
+#   rviz2 -d tools/two_dogs.rviz
+# They overlap where map_align fused them; until it does, go2_2's map has no TF and is not drawn.
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Reference Frame: world
+      Cell Size: 1
+      Plane Cell Count: 40
+    - Class: rviz_default_plugins/Map
+      Name: go2_1 map
+      Enabled: true
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: true
+      Topic:
+        Value: /go2_1/map
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/Map
+      Name: go2_2 map
+      Enabled: true
+      Alpha: 0.5
+      Color Scheme: costmap
+      Draw Behind: false
+      Topic:
+        Value: /go2_2/map
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Names: true
+      Show Arrows: false
+      Marker Scale: 1
+  Global Options:
+    Fixed Frame: world
+    Background Color: 48; 48; 48
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 40
+      X: 0
+      Y: 0

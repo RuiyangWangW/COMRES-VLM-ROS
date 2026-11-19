@@ -4,8 +4,12 @@
         [dog_link:=false]
 
 hint and vlm_base_url override the config's when given (taken as plain text). dog_link:=false
-when the robots' topics reach this computer directly (the same ROS 2 version)."""
+when the robots' topics reach this computer directly (the same ROS 2 version). A config with a
+map_align section (several robots, comres_two_dogs.yaml) starts map_align too: it places the
+robots' maps in world_frame."""
 import os
+
+import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -29,6 +33,10 @@ def _node(context):
     if LaunchConfiguration("dog_link").perform(context) == "true":
         nodes.append(Node(package="comres_ros", executable="comres_dog_link", name="dog_link", output="screen",
                           parameters=params[:1]))
+    with open(params[0]) as f:
+        if "map_align" in (yaml.safe_load(f) or {}):
+            nodes.append(Node(package="comres_ros", executable="comres_map_align", name="map_align", output="screen",
+                              parameters=params[:1]))
     return nodes
 
 
